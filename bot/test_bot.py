@@ -12,7 +12,9 @@ sent: list[tuple] = []
 bot.send = lambda chat, text: sent.append(("msg", chat, text))
 bot.send_document = lambda chat, name, content: sent.append(("doc", chat, name, content)) or True
 
-STATE = {"names": {"1": "Ustoz", "2": "Shogird"}, "owner": 1, "chat_ids": [1, 2]}
+STATE = {"owner": 1, "chat_ids": [1, 2], "contacts": {
+    "1": {"first_name": "Ustoz", "full_name": "Ustoz", "aliases": [], "role": "ustoz"},
+    "2": {"first_name": "Shogird", "full_name": "Shogird", "aliases": []}}}
 
 
 def test_blocks_are_delivered_and_removed() -> None:
@@ -50,6 +52,7 @@ def test_unpaired_chat_is_asked_for_code_and_code_pairs() -> None:
     assert sent[-1][:2] == ("msg", 7) and "kodini" in sent[-1][2] and bot.PAIR_CODE not in sent[-1][2]
     bot.handle(state, {**message, "text": bot.PAIR_CODE})
     assert state["chat_ids"] == [7] and state["owner"] == 7 and "Ulandingiz" in sent[-1][2]
+    assert state["contacts"]["7"]["role"] == "ustoz"
 
 
 def test_long_code_goes_as_file_short_code_stays() -> None:
@@ -103,3 +106,20 @@ def test_prompt_carries_bot_name() -> None:
     command = bot.build_command({"session_id": None, "names": {}}, "hi")
     prompt = command[command.index("--append-system-prompt") + 1]
     assert prompt.startswith("# Rol") and "**Teresa Lisbon**" in prompt
+
+
+def test_contacts_by_id_names_and_learned_aliases() -> None:
+    import copy
+    bot.save_state = lambda st: None
+    state = copy.deepcopy(STATE)
+    bot.update_contact(state, 2, {"first_name": "Oybek", "last_name": "Xushnazarov", "username": "oybek_x"})
+    assert bot.find_contact(state, "Xushnazarov") == 2 and bot.find_contact(state, "@oybek_x") == 2
+    assert bot.find_contact(state, "2") == 2 and bot.find_contact(state, "Ustoz") == 1
+
+    # the apprentice cannot rename himself or take a role; the owner can teach aliases and roles
+    note = bot.deliver_blocks(state, "Oybek", 2, "<<<KONTAKT 2 | rol: ustoz>>>")
+    assert "faqat ustoz" in note and state["contacts"]["2"].get("role") is None
+    bot.deliver_blocks(state, "Ustoz", 1, "ok <<<KONTAKT Oybek | ism: hushnazarov, Oybek aka | rol: shogird>>>")
+    assert bot.find_contact(state, "shogird") == 2 and bot.find_contact(state, "hushnazarov") == 2
+    prompt = bot.contacts_prompt(state, 2)
+    assert "id 2: Oybek, Xushnazarov" in prompt and "(shogird) ← hozir yozayotgan" in prompt

@@ -162,19 +162,72 @@ def keep_typing(chat_id: int, stop: threading.Event) -> None:
 
 # ---- reply post-processing -----------------------------------------------------------------
 
+def contact_names(contact: dict[str, Any]) -> list[str]:
+    """Every name a contact can be called by: Telegram names, @username, learned aliases, role."""
+    names = [contact.get("first_name"), contact.get("last_name"), contact.get("full_name"),
+             contact.get("username") and f"@{contact['username']}", contact.get("role")]
+    seen: dict[str, str] = {}
+    for name in names + contact.get("aliases", []):
+        if name and name.lower() not in seen:
+            seen[name.lower()] = name
+    return list(seen.values())
+
+
+def update_contact(state: dict[str, Any], chat_id: int, sender: dict[str, Any]) -> dict[str, Any]:
+    """Refresh a contact's Telegram names from the message (identity is the chat id, names can change)."""
+    contact = state.setdefault("contacts", {}).setdefault(str(chat_id), {"aliases": []})
+    first, last = sender.get("first_name", ""), sender.get("last_name", "")
+    contact.update(first_name=first, last_name=last, full_name=f"{first} {last}".strip(), username=sender.get("username", ""))
+    if chat_id == state.get("owner"):
+        contact["role"] = "ustoz"
+    state.setdefault("names", {})[str(chat_id)] = contact["full_name"] or first or str(chat_id)
+    return contact
+
+
 def find_contact(state: dict[str, Any], name: str) -> int | None:
-    """Chat id of a paired contact by (partial) name."""
-    name = name.strip().lower()
-    return next((int(cid) for cid, known in state.get("names", {}).items()
-                 if known.lower() == name or (name and name in known.lower())), None)
+    """Chat id of a paired contact by id, any of its names/aliases/role (exact first, then partial)."""
+    wanted = name.strip().lstrip("[").rstrip("]").strip().lower()
+    if not wanted:
+        return None
+    if wanted.isdigit() and wanted in state.get("contacts", {}):
+        return int(wanted)
+    contacts = state.get("contacts", {})
+    for exact in (True, False):
+        for cid, contact in contacts.items():
+            for known in contact_names(contact):
+                known = known.lower()
+                if (known == wanted) if exact else (wanted in known or known in wanted.split()):
+                    return int(cid)
+    return None
 
 
-def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str) -> str:
+def apply_contact_block(state: dict[str, Any], from_owner: bool, header: str) -> str:
+    """<<<KONTAKT who | ism: a, b | rol: r>>> - only the owner's messages may name people or give roles."""
+    parts = [part.strip() for part in header.split("|")]
+    target = find_contact(state, parts[0]) if parts else None
+    if not from_owner:
+        return "\n(⚠️ Kontakt ma'lumotini faqat ustoz xabari asosida o'zgartirish mumkin)\n"
+    if target is None:
+        return f"\n(⚠️ Kontakt topilmadi: {parts[0] if parts else '?'})\n"
+    contact = state["contacts"][str(target)]
+    for part in parts[1:]:
+        key, _, value = part.partition(":")
+        values = [v.strip() for v in value.split(",") if v.strip()]
+        if key.strip().lower() in ("ism", "ismlar", "alias") and values:
+            contact["aliases"] = list(dict.fromkeys(contact.get("aliases", []) + values))
+        elif key.strip().lower() == "rol" and values and target != state.get("owner"):
+            contact["role"] = values[0]
+    save_state(state)
+    return f"\n(👤 Kontakt yangilandi: {', '.join(contact_names(contact))})\n"
+
+
+def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str) -> str:  # noqa: C901
     """Act on the reply's blocks, remove them and leave a short note in their place.
 
     <<<XABAR Name ... XABAR>>>          message a paired contact
     <<<FAYL name.ext [Name] ... FAYL>>>  send the text as a file
     <<<YUBOR path [Name]>>>             send an existing file from the work folder (any type)
+    <<<KONTAKT who | ism: a, b | rol: r>>> remember names/role of a contact (only from the owner's messages)
     Code blocks longer than LONG_CODE_CHARS are also sent as files instead of chat text.
     """
     blocks = re.compile(r"<<<(XABAR|FAYL)([^\n]*)\n(.*?)\1>>>", re.S)
@@ -214,6 +267,8 @@ def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str)
             return f"\n(📎 Kod uzun bo'lgani uchun fayl qilib yuborildi: {name})\n"
         return match.group(0)
 
+    from_owner = chat_id == state.get("owner")
+    reply = re.sub(r"<<<KONTAKT([^\n>]*)>>>", lambda m: apply_contact_block(state, from_owner, m.group(1)), reply)
     reply = blocks.sub(handle_block, reply)
     reply = re.sub(r"<<<YUBOR([^\n>]*)>>>", handle_send, reply)
     return re.sub(r"```(\w*)\n(.*?)```", handle_long_code, reply, flags=re.S)
@@ -221,11 +276,15 @@ def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str)
 
 # ---- Claude --------------------------------------------------------------------------------
 
-def contacts_prompt(state: dict[str, Any]) -> str:
-    """The bot's name and who is paired with it, so Claude can introduce itself and address messages and files."""
-    lines = [f"- {name}{' (ustoz, egasi)' if int(cid) == state.get('owner') else ''}"
-             for cid, name in state.get("names", {}).items()]
-    return "\n\n## Telegram kontaktlar (botga ulangan odamlar)\n" + ("\n".join(lines) or "- (hali yo'q)")
+def contacts_prompt(state: dict[str, Any], current_chat: int | None = None) -> str:
+    """Paired people by Telegram id with every known name and role, so Claude can recognise and address them."""
+    lines = []
+    for cid, contact in state.get("contacts", {}).items():
+        role = "ustoz, egasi" if int(cid) == state.get("owner") else contact.get("role", "rol noma'lum")
+        current = " ← hozir yozayotgan" if current_chat is not None and int(cid) == current_chat else ""
+        lines.append(f"- id {cid}: {', '.join(dict.fromkeys(contact_names(contact)))} ({role}){current}")
+    return ("\n\n## Telegram kontaktlar (botga ulangan odamlar; shaxs = Telegram id, nomlari har xil bo'lishi mumkin)\n"
+            + ("\n".join(lines) or "- (hali yo'q)"))
 
 
 def persona_prompt() -> str:
@@ -239,7 +298,7 @@ def persona_prompt() -> str:
     )
 
 
-def build_command(state: dict[str, Any], prompt: str) -> list[str]:
+def build_command(state: dict[str, Any], prompt: str, chat_id: int | None = None) -> list[str]:
     """The claude -p call: memory MCP only, no shell, writes limited to the work folder."""
     command = [
         "claude", "-p", prompt,
@@ -248,16 +307,16 @@ def build_command(state: dict[str, Any], prompt: str) -> list[str]:
         "--mcp-config", str(MCP_CONFIG), "--strict-mcp-config",
         "--allowedTools", *ALLOWED_TOOLS,
         "--disallowedTools", *DISALLOWED_TOOLS,
-        "--append-system-prompt", persona_prompt() + RULES_FILE.read_text() + contacts_prompt(state),
+        "--append-system-prompt", persona_prompt() + RULES_FILE.read_text() + contacts_prompt(state, chat_id),
     ]
     if state.get("session_id"):
         command += ["--resume", state["session_id"]]
     return command
 
 
-def ask_claude(state: dict[str, Any], prompt: str) -> str:
+def ask_claude(state: dict[str, Any], prompt: str, chat_id: int | None = None) -> str:
     """Run one turn of the shared conversation and return the reply text."""
-    process = subprocess.run(build_command(state, prompt), cwd=WORK, capture_output=True, text=True,
+    process = subprocess.run(build_command(state, prompt, chat_id), cwd=WORK, capture_output=True, text=True,
                              timeout=CLAUDE_TIMEOUT, stdin=subprocess.DEVNULL)
     try:
         output = json.loads(process.stdout)
@@ -269,7 +328,7 @@ def ask_claude(state: dict[str, Any], prompt: str) -> str:
     if output.get("is_error") and state.get("session_id") and "session" in str(output.get("result", "")).lower():
         state["session_id"] = None
         save_state(state)
-        return ask_claude(state, prompt)
+        return ask_claude(state, prompt, chat_id)
 
     if output.get("is_error"):
         print(f"claude returned an error: {str(output.get('result'))[:500]}", flush=True)
@@ -387,14 +446,15 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
     """Pairing, commands, then one Claude turn per message."""
     chat_id = message["chat"]["id"]
     text = (message.get("text") or message.get("caption") or "").strip()
-    who = message["from"].get("first_name", "?")
+    sender = message.get("from", {})
+    who = " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")])) or "?"
 
     # Only paired chats; the first paired chat becomes the owner. Others are asked for the code (never told it).
     if chat_id not in state["chat_ids"]:
         if text in (PAIR_CODE, f"/start {PAIR_CODE}"):
             state["chat_ids"].append(chat_id)
-            state.setdefault("names", {})[str(chat_id)] = who
             state.setdefault("owner", chat_id)
+            update_contact(state, chat_id, sender)
             save_state(state)
             print(f"paired chat {chat_id} ({who})", flush=True)
             send(chat_id, "Ulandingiz ✅ Endi oddiy yozavering.\n/new — yangi suhbat")
@@ -403,6 +463,8 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
             send(chat_id, "Salom! Botdan foydalanish uchun ulanish kodini yuboring.")
         return
 
+    update_contact(state, chat_id, sender)
+    save_state(state)
     attachment = save_attachment(message)
     if attachment:
         text = f"{text}\n\n{attachment}".strip()
@@ -419,7 +481,7 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
     threading.Thread(target=keep_typing, args=(chat_id, stop), daemon=True).start()
     try:
         with lock:  # one shared conversation, so one message at a time
-            reply = deliver_blocks(state, who, chat_id, ask_claude(state, f"[{who}]: {text}"))
+            reply = deliver_blocks(state, who, chat_id, ask_claude(state, f"[{who} | id {chat_id}]: {text}", chat_id))
     except subprocess.TimeoutExpired:
         reply = "Javob juda uzoq cho'zildi, to'xtatildi."
     except Exception as error:  # keep the bot alive on any failure
@@ -436,6 +498,8 @@ def main() -> None:
     if tg("getMyName").get("result", {}).get("name") != BOT_NAME:  # Telegram rate-limits renames, so only when it differs
         tg("setMyName", name=BOT_NAME)
     state = load_state()
+    for cid, name in state.get("names", {}).items():  # older state kept only first names
+        state.setdefault("contacts", {}).setdefault(cid, {"first_name": name, "full_name": name, "aliases": []})
     save_state(state)
     print("bridge started", flush=True)
 
