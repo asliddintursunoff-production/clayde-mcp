@@ -1,7 +1,7 @@
 # Telegram bot that runs Claude Code (subscription login via CLAUDE_CODE_OAUTH_TOKEN) with the work-memory MCP server.
 FROM node:22-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-requests ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-requests python3-openpyxl python3-docx ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code \
     && npm cache clean --force

@@ -12,6 +12,7 @@ import re
 import subprocess
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,13 @@ DISALLOWED_TOOLS = [
     "Read(//proc/**)", "Read(//etc/**)", "Read(//app/**)",
 ]
 MAX_CHUNK = 4000
+LONG_CODE_CHARS = 2500          # code blocks longer than this are sent as files, not chat messages
+TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024
+ZIP_MAX_TOTAL = 200 * 1024 * 1024
+ZIP_MAX_FILES = 2000
+CODE_EXT = {"python": "py", "py": "py", "sql": "sql", "json": "json", "bash": "sh", "sh": "sh", "yaml": "yaml",
+            "yml": "yaml", "powerquery": "m", "m": "m", "dax": "dax", "csv": "csv", "xml": "xml", "html": "html",
+            "javascript": "js", "js": "js", "ts": "ts", "markdown": "md", "md": "md", "text": "txt", "": "txt"}
 
 lock = threading.Lock()
 
@@ -125,15 +133,23 @@ def send(chat_id: int, text: str) -> None:
             tg("sendMessage", chat_id=chat_id, text=re.sub(r"<[^>]+>", "", html.unescape(chunk))[:MAX_CHUNK])
 
 
-def send_document(chat_id: int, name: str, content: str) -> bool:
-    """Send text as a file attachment (task briefs, SQL, notebooks)."""
+def send_document(chat_id: int, name: str, content: str | bytes, caption: str = "") -> bool:
+    """Send text or bytes as a file attachment (code, briefs, zips, images)."""
+    data = content.encode() if isinstance(content, str) else content
     try:
-        response = requests.post(f"{API}/sendDocument", data={"chat_id": chat_id},
-                                 files={"document": (name, content.encode())}, timeout=70)
+        response = requests.post(f"{API}/sendDocument", data={"chat_id": chat_id, "caption": caption[:1000]},
+                                 files={"document": (name, data)}, timeout=120)
         return bool(response.json().get("ok"))
     except requests.RequestException as error:
         print(f"sendDocument error: {error}", flush=True)
         return False
+
+
+def work_path(raw: str) -> Path | None:
+    """Resolve a path the model names; only files inside the work folder may be sent."""
+    candidate = Path(raw.strip().strip("`'\""))
+    candidate = (candidate if candidate.is_absolute() else WORK / candidate).resolve()
+    return candidate if candidate.is_file() and candidate.is_relative_to(WORK.resolve()) else None
 
 
 def keep_typing(chat_id: int, stop: threading.Event) -> None:
@@ -153,11 +169,14 @@ def find_contact(state: dict[str, Any], name: str) -> int | None:
 
 
 def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str) -> str:
-    """Handle <<<XABAR Name ... XABAR>>> (message a contact) and <<<FAYL name.ext ... FAYL>>> (send a file).
+    """Act on the reply's blocks, remove them and leave a short note in their place.
 
-    The blocks are removed from the reply and replaced with a short delivery note.
+    <<<XABAR Name ... XABAR>>>          message a paired contact
+    <<<FAYL name.ext [Name] ... FAYL>>>  send the text as a file
+    <<<YUBOR path [Name]>>>             send an existing file from the work folder (any type)
+    Code blocks longer than LONG_CODE_CHARS are also sent as files instead of chat text.
     """
-    pattern = re.compile(r"<<<(XABAR|FAYL)([^\n]*)\n(.*?)\1>>>", re.S)
+    blocks = re.compile(r"<<<(XABAR|FAYL)([^\n]*)\n(.*?)\1>>>", re.S)
 
     def handle_block(match: re.Match[str]) -> str:
         kind, header, body = match.group(1), match.group(2).strip(), match.group(3).strip()
@@ -175,7 +194,28 @@ def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str)
             return f"\n(✅ Xabar yuborildi: {header})\n"
         return f"\n(⚠️ Xabar yuborilmadi: \"{header}\" kontaktlar ro'yxatida yo'q)\n"
 
-    return pattern.sub(handle_block, reply)
+    def handle_send(match: re.Match[str]) -> str:
+        parts = match.group(1).strip().split(maxsplit=1)
+        path = work_path(parts[0]) if parts else None
+        target = find_contact(state, parts[1]) if len(parts) > 1 else chat_id
+        if path and target and send_document(target, path.name, path.read_bytes()):
+            return f"\n(📎 Fayl yuborildi: {path.name})\n"
+        return f"\n(⚠️ Fayl yuborilmadi: {parts[0] if parts else '?'} — ish papkasida topilmadi)\n"
+
+    counter = iter(range(1, 1000))
+
+    def handle_long_code(match: re.Match[str]) -> str:
+        language, code = match.group(1).lower(), match.group(2)
+        if len(code) <= LONG_CODE_CHARS:
+            return match.group(0)
+        name = f"code_{time.strftime('%H%M%S')}_{next(counter)}.{CODE_EXT.get(language, language or 'txt')}"
+        if send_document(chat_id, name, code.rstrip() + "\n"):
+            return f"\n(📎 Kod uzun bo'lgani uchun fayl qilib yuborildi: {name})\n"
+        return match.group(0)
+
+    reply = blocks.sub(handle_block, reply)
+    reply = re.sub(r"<<<YUBOR([^\n>]*)>>>", handle_send, reply)
+    return re.sub(r"```(\w*)\n(.*?)```", handle_long_code, reply, flags=re.S)
 
 
 # ---- Claude --------------------------------------------------------------------------------
@@ -229,23 +269,106 @@ def ask_claude(state: dict[str, Any], prompt: str) -> str:
 
 # ---- message handling ----------------------------------------------------------------------
 
-def save_image(message: dict[str, Any]) -> Path | None:
-    """Download a photo (or an image sent as a file) into the work folder."""
-    if message.get("photo"):
-        file_id, ext = message["photo"][-1]["file_id"], ".jpg"
-    elif message.get("document", {}).get("mime_type", "").startswith("image/"):
-        file_id = message["document"]["file_id"]
-        ext = Path(message["document"].get("file_name", "")).suffix or ".png"
-    else:
+def _download(file_id: str, size: int | None) -> bytes | None:
+    """Download a Telegram file (bots can fetch up to 20 MB)."""
+    if size and size > TELEGRAM_DOWNLOAD_LIMIT:
         return None
     file_path = tg("getFile", file_id=file_id).get("result", {}).get("file_path")
     if not file_path:
         return None
-    data = requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}", timeout=60).content
-    UPLOADS.mkdir(parents=True, exist_ok=True)
-    local = UPLOADS / f"{time.strftime('%Y%m%d_%H%M%S')}_{message['message_id']}{ext}"
-    local.write_bytes(data)
-    return local
+    return requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}", timeout=120).content
+
+
+def _extract_zip(archive: Path) -> tuple[Path, list[str]]:
+    """Unpack a zip next to it, refusing unsafe paths and archive bombs; returns the folder and file list."""
+    target = archive.with_suffix("")
+    target.mkdir(exist_ok=True)
+    names: list[str] = []
+    total = 0
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist()[:ZIP_MAX_FILES]:
+            destination = (target / info.filename).resolve()
+            if info.is_dir() or not destination.is_relative_to(target.resolve()):
+                continue
+            total += info.file_size
+            if total > ZIP_MAX_TOTAL:
+                break
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(zf.read(info))
+            names.append(info.filename)
+    return target, names
+
+
+def _readable_copy(path: Path) -> Path | None:
+    """Excel and Word files get a text copy the model can read (csv per sheet / plain text)."""
+    try:
+        if path.suffix.lower() in (".xlsx", ".xlsm"):
+            import csv
+            import openpyxl
+
+            book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            out = path.with_suffix(".sheets.txt")
+            with out.open("w", newline="") as handle:
+                for sheet in book.worksheets:
+                    handle.write(f"### sheet: {sheet.title}\n")
+                    writer = csv.writer(handle)
+                    for row in sheet.iter_rows(values_only=True):
+                        writer.writerow(["" if value is None else value for value in row])
+            return out
+        if path.suffix.lower() == ".docx":
+            import docx
+
+            out = path.with_suffix(".txt")
+            out.write_text("\n".join(p.text for p in docx.Document(path).paragraphs))
+            return out
+    except Exception as error:  # a broken file must not stop the message
+        print(f"convert failed for {path.name}: {error}", flush=True)
+    return None
+
+
+def save_attachment(message: dict[str, Any]) -> str:
+    """Save any file the user sent (photo, document, zip, audio, video) and describe it for the model."""
+    kinds = [("photo", None), ("document", None), ("video", ".mp4"), ("audio", ".mp3"), ("voice", ".ogg"),
+             ("video_note", ".mp4"), ("animation", ".mp4")]
+    for kind, default_ext in kinds:
+        item = message.get(kind)
+        if not item:
+            continue
+        if kind == "photo":
+            item, default_ext = item[-1], ".jpg"  # last = largest size
+        name = item.get("file_name") or f"{kind}{default_ext or ''}"
+        data = _download(item["file_id"], item.get("file_size"))
+        if data is None:
+            return f"(Fayl yubordi: {name}, lekin u 20 MB dan katta yoki yuklab bo'lmadi — kichikroq qilib yoki zip qilib yuborishni so'rang.)"
+
+        UPLOADS.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^\w.\-]+", "_", Path(name).name) or "file"
+        local = UPLOADS / f"{time.strftime('%Y%m%d_%H%M%S')}_{message['message_id']}_{safe}"
+        local.write_bytes(data)
+        note = f"(Fayl yubordi: {local} — Read tool bilan oching.)"
+
+        if local.suffix.lower() == ".zip":
+            try:
+                folder, names = _extract_zip(local)
+                shown = "\n".join(f"- {n}" for n in names[:60]) + (f"\n- ... yana {len(names) - 60} ta" if len(names) > 60 else "")
+                note = f"(Zip yubordi, ochildi: {folder}\n{shown}\nKerakli fayllarni Read tool bilan oching.)"
+            except zipfile.BadZipFile:
+                note = f"(Zip yubordi: {local}, lekin arxiv buzuq.)"
+        elif kind in ("audio", "voice", "video", "video_note", "animation"):
+            note = f"(Audio/video yubordi: {local}. Uni eshitish/ko'rish imkoni yo'q — mazmunini matn bilan yozishini so'rang.)"
+        else:
+            readable = _readable_copy(local)
+            if readable:
+                note = f"(Fayl yubordi: {local}; o'qish uchun matn nusxasi: {readable} — Read tool bilan oching.)"
+        return note
+
+    if message.get("sticker"):
+        return "(Stiker yubordi.)"
+    if message.get("location"):
+        return "(Joylashuv yubordi.)"
+    if message.get("contact"):
+        return "(Kontakt yubordi.)"
+    return ""
 
 
 def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
@@ -268,11 +391,11 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
             send(chat_id, "Salom! Botdan foydalanish uchun ulanish kodini yuboring.")
         return
 
-    image = save_image(message)
-    if image:
-        text = f"{text}\n\n(Rasm yubordi: {image} — Read tool bilan ochib ko'ring.)".strip()
+    attachment = save_attachment(message)
+    if attachment:
+        text = f"{text}\n\n{attachment}".strip()
     if not text:
-        send(chat_id, "Hozircha matn va rasmlarni tushunaman.")
+        send(chat_id, "Bu turdagi xabarni hali tushunmayman — matn yoki fayl yuboring.")
         return
     if text == "/new":
         state["session_id"] = None

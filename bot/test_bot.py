@@ -50,3 +50,50 @@ def test_unpaired_chat_is_asked_for_code_and_code_pairs() -> None:
     assert sent[-1][:2] == ("msg", 7) and "kodini" in sent[-1][2] and bot.PAIR_CODE not in sent[-1][2]
     bot.handle(state, {**message, "text": bot.PAIR_CODE})
     assert state["chat_ids"] == [7] and state["owner"] == 7 and "Ulandingiz" in sent[-1][2]
+
+
+def test_long_code_goes_as_file_short_code_stays() -> None:
+    sent.clear()
+    long_sql = "SELECT 1;\n" * 400
+    out = bot.deliver_blocks(STATE, "Ustoz", 1, f"Short:\n```sql\nSELECT 2;\n```\nLong:\n```sql\n{long_sql}```")
+    assert "SELECT 2;" in out and "fayl qilib yuborildi" in out and "SELECT 1;" not in out
+    assert sent[-1][0] == "doc" and sent[-1][2].endswith(".sql")
+
+
+def test_send_existing_file_only_inside_work(tmp_path=None) -> None:
+    import tempfile
+    sent.clear()
+    bot.WORK = Path(tempfile.mkdtemp())
+    (bot.WORK / "report.csv").write_text("a,b\n1,2\n")
+    outside = Path(tempfile.mkdtemp()) / "secret.txt"
+    outside.write_text("x")
+    out = bot.deliver_blocks(STATE, "Ustoz", 1, f"<<<YUBOR report.csv>>> and <<<YUBOR {outside}>>>")
+    assert sent == [("doc", 1, "report.csv", b"a,b\n1,2\n")]
+    assert "Fayl yuborildi: report.csv" in out and "topilmadi" in out
+
+
+def test_zip_is_extracted_safely_and_excel_is_converted() -> None:
+    import io, tempfile, zipfile, openpyxl
+    bot.WORK = Path(tempfile.mkdtemp())
+    bot.UPLOADS = bot.WORK / "uploads"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("notes/a.md", "# hello")
+        zf.writestr("../../evil.txt", "nope")
+    book = openpyxl.Workbook(); book.active.append(["col", 1]); xbuf = io.BytesIO(); book.save(xbuf)
+    files = {"z": buffer.getvalue(), "x": xbuf.getvalue()}
+    bot._download = lambda file_id, size: files[file_id]
+
+    note = bot.save_attachment({"message_id": 5, "document": {"file_id": "z", "file_name": "pack.zip"}})
+    assert "notes/a.md" in note and "evil" not in note
+    assert not (bot.WORK.parent / "evil.txt").exists() and not any(bot.WORK.rglob("evil.txt"))
+
+    note = bot.save_attachment({"message_id": 6, "document": {"file_id": "x", "file_name": "data.xlsx"}})
+    copy = Path(note.split("matn nusxasi: ")[1].split(" —")[0])
+    assert "col,1" in copy.read_text()
+
+
+def test_unknown_or_large_files_are_explained() -> None:
+    bot._download = lambda file_id, size: None
+    assert "20 MB" in bot.save_attachment({"message_id": 7, "document": {"file_id": "big", "file_name": "huge.zip", "file_size": 10**9}})
+    assert bot.save_attachment({"message_id": 8, "sticker": {"file_id": "s"}}) == "(Stiker yubordi.)"

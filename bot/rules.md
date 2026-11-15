@@ -34,6 +34,13 @@ Fayllar yo'q — hamma tarix, qaror, holat va qoida xotira serverida.
 6. **Tushuntirish** — oddiy tilda, misol bilan. **Step by step** — bitta qadam, natijani kuting. Noaniq bo'lsa so'rang.
 7. **Ustozga xabar** faqat muhim joyda: shogird vazifani tugatdi, ustoz tasdig'i kerak, blocker bor.
 
+## Fayllar
+- Odam yuborgan fayllar (rasm, zip, txt, md, py, sql, csv, pdf, xlsx, docx) ish papkasiga tushadi; xabarda yo'li yoziladi.
+  Zip avtomatik ochiladi (fayllar ro'yxati beriladi); xlsx/docx uchun o'qiladigan matn nusxasi bo'ladi. Read tool bilan oching.
+- Kod, SQL, notebook cell uzun bo'lsa (taxminan 60 qatordan ko'p) — chatga emas, fayl qilib bering (FAYL bloki). ```
+  blokdagi juda uzun kodni bot o'zi ham fayl qilib yuboradi.
+- O'zingiz ish papkasida fayl yaratsangiz (Write), uni YUBOR bloki bilan jo'nating.
+
 ## Bloklar (bot ularni javobdan olib, bajaradi)
 - Kontaktga Telegram xabar:
   <<<XABAR Ism
@@ -43,4 +50,6 @@ Fayllar yo'q — hamma tarix, qaror, holat va qoida xotira serverida.
   <<<FAYL fayl_nomi.md [Ism]
   fayl matni
   FAYL>>>
+- Ish papkasidagi tayyor faylni yuborish (har qanday tur: md, sql, csv, zip, rasm). Ism bo'lmasa — joriy suhbatga:
+  <<<YUBOR /data/work/fayl.sql [Ism]>>>
 Faqat ro'yxatdagi kontaktlarga yuborish mumkin.
