@@ -3,6 +3,7 @@
 Usage:
     python scripts/mem.py <tool> '<json arguments>'
     python scripts/mem.py tools                       # list tools
+    python scripts/mem.py --railway memory_stats      # cloud server (~/.config/clayde-mcp/railway.env)
     echo '{"kind": "semantic", ...}' | python scripts/mem.py memory_save -   # arguments from stdin
 
 Reads MCP_TOKEN and MEMORY_URL (default http://localhost:8000) from the environment or backend/.env.
@@ -17,8 +18,17 @@ import urllib.request
 from pathlib import Path
 
 
+RAILWAY_ENV = Path.home() / ".config" / "clayde-mcp" / "railway.env"
+
+
 def load_env() -> None:
-    """Fill missing variables from backend/.env next to this script."""
+    """Pick the server: `--railway` uses ~/.config/clayde-mcp/railway.env, otherwise backend/.env fills gaps."""
+    if "--railway" in sys.argv:
+        sys.argv.remove("--railway")
+        for line in RAILWAY_ENV.read_text().splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, value = line.split("=", 1)
+                os.environ[key.strip()] = value.strip()
     env_file = Path(__file__).resolve().parent.parent / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():

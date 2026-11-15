@@ -82,6 +82,29 @@ curl -X POST localhost:8000/api/admin/terms -H "Authorization: Bearer $ADMIN_TOK
    (lokaldagidan boshqa, `gen_keys.py` bilan). Healthcheck path: `/health`.
 5. Mijozlarda URL: `https://<app>.up.railway.app/mcp`.
 
+## Telegram bot (`bot/`) — 24/7, subscription bilan
+Bot har xabarni `claude -p` ga beradi (Claude obunasi, API key emas). Bilim manbai — shu MCP xotira; fayl yo'q.
+Bash yo'q; fayl o'qish/yozish faqat `/data/work` ichida; token saqlaydigan fayllar va `/proc` taqiqlangan.
+
+Railway'da ikkinchi servis:
+1. Lokalda bir marta: `claude setup-token` → chiqqan tokenni faqat Railway'ga qo'ying (chatga emas).
+2. New → GitHub Repo → shu repo, **Root Directory: `bot`**, region `sfo`.
+3. Volume: mount path `/data` (sessiyalar, state, ish papkasi).
+4. Variables:
+   ```
+   TELEGRAM_TOKEN=<bot token>
+   PAIR_CODE=<ulanish kodi>
+   CLAUDE_CODE_OAUTH_TOKEN=<setup-token natijasi>
+   MEMORY_MCP_URL=https://<memory domain>/mcp
+   MCP_TOKEN=${{<memory servis nomi>.MCP_TOKEN}}
+   BOT_MODEL=opus
+   ```
+5. Restart policy: Always. Domain kerak emas.
+6. Lokal botni to'xtating (bir token bilan ikki bot ishlasa Telegram 409 beradi).
+7. Telegram'da avval ustoz, keyin shogird `PAIR_CODE` ni yuboradi (birinchi ulangan = egasi). `/new` — yangi suhbat.
+
+Bloklar: `<<<XABAR Ism ... XABAR>>>` kontaktga xabar, `<<<FAYL nom.md [Ism] ... FAYL>>>` fayl yuborish.
+
 ## Arzonroq variant
 Bitta kichik VPS (2 vCPU / 4 GB, oyiga ~$5) da shu `docker-compose.yml` (dev volume qatorisiz) + keyin bot ham shu yerda.
 S3 uchun Cloudflare R2 (10 GB bepul). Railway qulayroq (deploy, backup, TLS o'zi), lekin ~$8–10 (bot bilan ~$13–15).
