@@ -17,6 +17,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.embeddings import Embedder
 from app.pseudonym import TOKEN_RE
+from app.scope import PERSONAL_TAG, personal_filter_sql, work_only
 from app.storage import ObjectStore
 from app.vault import Vault
 
@@ -175,8 +176,8 @@ class MemoryService:
         if not 1 <= importance <= 5:
             raise ValueError("importance must be 1..5")
 
-        # Mask everything that is stored as text
-        tags = _normalize_tags(tags)
+        # Mask everything that is stored as text (the work scope cannot create personal memories)
+        tags = [t for t in _normalize_tags(tags) if not (work_only() and t == PERSONAL_TAG)]
         m_title, m_body = self.vault.mask(title.strip()), self.vault.mask(body.replace("\x00", "").strip())
         m_tags = [self.vault.mask(t) for t in tags]
         m_source = self.vault.mask(source.strip()) if source else None
@@ -237,8 +238,9 @@ class MemoryService:
         """Active memories of the same kind that are very close in meaning."""
         async with self.pool.connection() as conn:
             rows = await (await conn.execute(
-                """SELECT id, title, embedding <=> %s::vector AS distance FROM memories
+                f"""SELECT id, title, embedding <=> %s::vector AS distance FROM memories
                    WHERE kind = %s AND status = 'active' AND embedding IS NOT NULL AND id IS DISTINCT FROM %s::uuid
+                     AND {personal_filter_sql()}
                    ORDER BY embedding <=> %s::vector LIMIT 3""",
                 (vector, kind, exclude, vector),
             )).fetchall()
@@ -265,7 +267,7 @@ class MemoryService:
 
         async with self.pool.connection() as conn, conn.transaction():
             current = await (await conn.execute(
-                f"SELECT {COLUMNS} FROM memories WHERE id = %s FOR UPDATE", (uuid.UUID(memory_id),)
+                f"SELECT {COLUMNS} FROM memories WHERE id = %s AND {personal_filter_sql()} FOR UPDATE", (uuid.UUID(memory_id),)
             )).fetchone()
             if current is None:
                 raise ValueError(f"memory {memory_id} not found")
@@ -311,7 +313,7 @@ class MemoryService:
             tokens = await self.vault.persist_tokens(conn, [masked_note])
             row = await (await conn.execute(
                 f"""UPDATE memories SET status = 'archived', archive_note = %s, updated_at = now()
-                    WHERE id = %s RETURNING {COLUMNS}""",
+                    WHERE id = %s AND {personal_filter_sql()} RETURNING {COLUMNS}""",
                 (masked_note.text, uuid.UUID(memory_id)),
             )).fetchone()
             if row is None:
@@ -326,7 +328,9 @@ class MemoryService:
         """Full memories by id (archived ones too)."""
         ids = [uuid.UUID(i) for i in memory_ids]
         async with self.pool.connection() as conn:
-            rows = await (await conn.execute(f"SELECT {COLUMNS} FROM memories WHERE id = ANY(%s)", (ids,))).fetchall()
+            rows = await (await conn.execute(
+                f"SELECT {COLUMNS} FROM memories WHERE id = ANY(%s) AND {personal_filter_sql()}", (ids,)
+            )).fetchall()
         found = {str(r["id"]): r for r in rows}
         return [self._out(found[i], reveal) if i in found else {"id": i, "error": "not found"} for i in memory_ids]
 
@@ -346,7 +350,7 @@ class MemoryService:
         self, kind: str | None, ticket: str | None, tags: list[str] | None, since: str | None, include_archived: bool
     ) -> tuple[str, list[Any]]:
         """SQL WHERE clause and parameters shared by search and listing."""
-        clauses, params = ["TRUE"], []
+        clauses, params = [personal_filter_sql()], []
         if not include_archived:
             clauses.append("status = 'active'")
         if kind:
@@ -426,11 +430,13 @@ class MemoryService:
         ticket = _normalize_ticket(ticket)
         async with self.pool.connection() as conn:
             history = await (await conn.execute(
-                f"SELECT {COLUMNS} FROM memories WHERE ticket = %s AND status = 'active' ORDER BY occurred_at LIMIT 60",
+                f"""SELECT {COLUMNS} FROM memories WHERE ticket = %s AND status = 'active' AND {personal_filter_sql()}
+                    ORDER BY occurred_at LIMIT 60""",
                 (ticket,),
             )).fetchall()
             rules = await (await conn.execute(
                 f"""SELECT {COLUMNS} FROM memories WHERE kind = 'procedural' AND status = 'active' AND importance >= 4
+                    AND {personal_filter_sql()}
                     ORDER BY importance DESC, updated_at DESC LIMIT 15"""
             )).fetchall()
 
@@ -452,10 +458,10 @@ class MemoryService:
         """Counts by kind and status."""
         async with self.pool.connection() as conn:
             rows = await (await conn.execute(
-                "SELECT kind, status, count(*) AS n, max(updated_at) AS last FROM memories GROUP BY kind, status ORDER BY 1, 2"
+                f"SELECT kind, status, count(*) AS n, max(updated_at) AS last FROM memories WHERE {personal_filter_sql()} GROUP BY kind, status ORDER BY 1, 2"
             )).fetchall()
             tickets = await (await conn.execute(
-                "SELECT ticket, count(*) AS n, max(occurred_at) AS last FROM memories WHERE ticket IS NOT NULL AND status = 'active' "
+                f"SELECT ticket, count(*) AS n, max(occurred_at) AS last FROM memories WHERE ticket IS NOT NULL AND status = 'active' AND {personal_filter_sql()} "
                 "GROUP BY ticket ORDER BY max(occurred_at) DESC LIMIT 30"
             )).fetchall()
         return {

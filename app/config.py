@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Access tokens: MCP clients (Claude, bot) and admin (uploads, rebuild)
     mcp_token: str
     admin_token: str
+    work_token: str | None = None  # optional: work-only access (no "personal" memories), for the bot
 
     # Embeddings (local ONNX model, no external API)
     embedding_enabled: bool = True

@@ -22,6 +22,7 @@ from app.mcp_tools import mcp
 from app.memories import MemoryService
 from app.pseudonym import Pseudonymizer
 from app.rest import bearer
+from app.scope import set_work_only
 from app.rest import router as rest_router
 from app.state import Services, services, set_services
 from app.storage import ObjectStore
@@ -92,11 +93,13 @@ class BearerAuth:
         token = supplied[7:] if supplied.lower().startswith("bearer ") else ""
         is_admin = bool(token) and hmac.compare_digest(token, settings.admin_token)
         is_client = bool(token) and hmac.compare_digest(token, settings.mcp_token)
+        is_work = bool(token and settings.work_token) and hmac.compare_digest(token, settings.work_token)
 
         if scope["path"].startswith("/api/admin"):
             allowed = is_admin
         else:
-            allowed = is_admin or is_client
+            allowed = is_admin or is_client or is_work
+        set_work_only(is_work)
         if not allowed:
             response = JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
             await response(scope, receive, send)

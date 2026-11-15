@@ -20,7 +20,7 @@ Postgres yo'qolsa: yangi baza → `POST /api/admin/restore` → hammasi S3'dan q
   holda. S3 yoki baza dump'i o'g'irlansa ham ismlar ko'rinmaydi. Kalitlar (`PSEUDO_*`) faqat env'da.
 - Email avtomatik topiladi; ism/kompaniya lug'atga qo'shiladi (`pseudo_add_term` yoki `/api/admin/terms`).
   `substring` rejimi so'z ichida ham topadi (masalan kompaniya nomi identifikator ichida).
-- Kirish: `MCP_TOKEN` (AI mijozlar), `ADMIN_TOKEN` (upload/restore). `/health` ochiq.
+- Kirish: `WORK_TOKEN` (ixtiyoriy, bot uchun: `personal` tegli memory'lar unga umuman ko'rinmaydi), `MCP_TOKEN` (AI mijozlar), `ADMIN_TOKEN` (upload/restore). `/health` ochiq.
 - Common: server hech qachon git ishlatmaydi (clone/pull/commit/push yo'q). Snapshot'ni admin yuklaydi.
 
 ## API doc (odamlar uchun)
@@ -99,7 +99,7 @@ Railway'da ikkinchi servis:
    PAIR_CODE=<ulanish kodi>
    CLAUDE_CODE_OAUTH_TOKEN=<setup-token natijasi>
    MEMORY_MCP_URL=https://<memory domain>/mcp
-   MCP_TOKEN=${{<memory servis nomi>.MCP_TOKEN}}
+   MCP_TOKEN=${{<memory servis nomi>.WORK_TOKEN}}   # work-only: shaxsiy memory'lar ko'rinmaydi
    BOT_MODEL=opus
    ```
 5. Restart policy: Always. Domain kerak emas.

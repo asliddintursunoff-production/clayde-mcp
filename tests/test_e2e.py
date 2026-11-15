@@ -16,6 +16,7 @@ import pytest
 BASE = os.environ.get("TEST_BASE_URL", "http://localhost:8000")
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+WORK_TOKEN = os.environ.get("WORK_TOKEN", "")
 RUN = uuid.uuid4().hex[:6]
 
 pytestmark = pytest.mark.skipif(not MCP_TOKEN, reason="needs a running server and MCP_TOKEN")
@@ -294,3 +295,21 @@ def test_removed_term_is_unmasked_by_full_remask(client: Client) -> None:
     assert status["status"] == "done" and status["memories_remasked"] >= 1
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         assert word in conn.execute("SELECT body FROM memories WHERE id = %s", (saved["id"],)).fetchone()[0]
+
+
+@pytest.mark.skipif(not WORK_TOKEN, reason="needs WORK_TOKEN")
+def test_work_token_never_sees_personal_memories(client: Client) -> None:
+    ticket = f"PERS{RUN}".upper()
+    personal = client.tool("memory_save", kind="semantic", ticket=ticket, tags=["personal"],
+                           title=f"Side project {RUN} status", body=f"Private hobby project {RUN} notes.")
+    work = Client(WORK_TOKEN)
+    assert all(r["id"] != personal["id"] for r in work.tool("memory_search", query=f"Side project {RUN}", limit=50))
+    assert work.tool("memory_get", ids=[personal["id"]])[0].get("error") == "not found"
+    assert all(t["ticket"] != ticket for t in work.tool("memory_stats")["recent_tickets"])
+    assert work.tool("task_context", ticket=ticket)["history"] == []
+    with pytest.raises(AssertionError, match="not found"):
+        work.tool("memory_archive", id=personal["id"], reason="x")
+    saved = work.tool("memory_save", kind="semantic", tags=["personal"], title=f"Work note {RUN}", body="Work.")
+    assert "personal" not in work.tool("memory_get", ids=[saved["id"]])[0]["tags"]
+    # the full token still sees it
+    assert client.tool("memory_get", ids=[personal["id"]])[0]["id"] == personal["id"]
