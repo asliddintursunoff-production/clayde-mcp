@@ -66,6 +66,9 @@ Eslatmalarni yuklash (faqat .md/.txt, repo nusxasiz):
 python scripts/upload_common.py ~/notes notes --exclude repo-copy drafts --only-ext .md .txt
 ```
 
+Noto'g'ri term'ni o'chirish: `DELETE /api/admin/terms` (aniq kind/value/match_mode/case), keyin `POST /api/admin/remask?full=true`
+(hamma narsani joriy lug'at bilan qayta niqoblaydi; o'chirilgan so'zlar ochiq holga qaytadi).
+
 Hamma term'ni saqlangan narsalarga qayta qo'llash: `POST /api/admin/remask` (admin token; fonda ishlaydi, `job_id` qaytaradi → `GET /api/admin/jobs/{id}`).
 
 Lug'atga ko'p so'z qo'shish:

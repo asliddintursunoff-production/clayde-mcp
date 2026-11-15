@@ -474,28 +474,34 @@ class MemoryService:
 
         async with self.pool.connection() as conn:
             rows = await (await conn.execute(f"SELECT {COLUMNS} FROM memories WHERE {condition}", (param,))).fetchall()
+        return sum([await self._remask_row(row) for row in rows])
 
-        changed = 0
-        for row in rows:
-            # Reveal first so existing tokens and new matches are masked consistently
-            m_title = self.vault.mask(self.vault.reveal(row["title"]))
-            m_body = self.vault.mask(self.vault.reveal(row["body"]))
-            m_tags = [self.vault.mask(self.vault.reveal(t)) for t in row["tags"]]
-            if m_title.text == row["title"] and m_body.text == row["body"] and [t.text for t in m_tags] == row["tags"]:
-                continue
-            vector = await self.embedder.embed_one(embedding_text(m_title.text, [t.text for t in m_tags], m_body.text))
-            async with self.pool.connection() as conn, conn.transaction():
-                tokens = await self.vault.persist_tokens(conn, [m_title, m_body, *m_tags])
-                updated = await (await conn.execute(
-                    f"""UPDATE memories SET title = %s, body = %s, tags = %s, embedding = COALESCE(%s, embedding),
-                               content_hash = %s WHERE id = %s RETURNING {COLUMNS}""",
-                    (m_title.text, m_body.text, [t.text for t in m_tags], vector,
-                     hashlib.sha256(f"{row['kind']}\n{m_title.text}\n{m_body.text}".encode()).hexdigest(), row["id"]),
-                )).fetchone()
-                await self.store.put_text(f"memories/{updated['kind']}/{updated['id']}.md", render_markdown(updated))
-            self.vault.remember(tokens)
-            changed += 1
-        return changed
+    async def renormalize_all(self) -> int:
+        """Re-mask every memory with the current dictionary (also un-masks words of removed terms)."""
+        async with self.pool.connection() as conn:
+            rows = await (await conn.execute(f"SELECT {COLUMNS} FROM memories")).fetchall()
+        return sum([await self._remask_row(row) for row in rows])
+
+    async def _remask_row(self, row: dict) -> int:
+        """Reveal and mask one memory again; store it only if the masked text changed. Returns 1 if changed."""
+        m_title = self.vault.mask(self.vault.reveal(row["title"]))
+        m_body = self.vault.mask(self.vault.reveal(row["body"]))
+        m_tags = [self.vault.mask(self.vault.reveal(t)) for t in row["tags"]]
+        if m_title.text == row["title"] and m_body.text == row["body"] and [t.text for t in m_tags] == row["tags"]:
+            return 0
+
+        vector = await self.embedder.embed_one(embedding_text(m_title.text, [t.text for t in m_tags], m_body.text))
+        async with self.pool.connection() as conn, conn.transaction():
+            tokens = await self.vault.persist_tokens(conn, [m_title, m_body, *m_tags])
+            updated = await (await conn.execute(
+                f"""UPDATE memories SET title = %s, body = %s, tags = %s, embedding = COALESCE(%s, embedding),
+                           content_hash = %s WHERE id = %s RETURNING {COLUMNS}""",
+                (m_title.text, m_body.text, [t.text for t in m_tags], vector,
+                 hashlib.sha256(f"{row['kind']}\n{m_title.text}\n{m_body.text}".encode()).hexdigest(), row["id"]),
+            )).fetchone()
+            await self.store.put_text(f"memories/{updated['kind']}/{updated['id']}.md", render_markdown(updated))
+        self.vault.remember(tokens)
+        return 1
 
     # ---- recovery ------------------------------------------------------------------------
 

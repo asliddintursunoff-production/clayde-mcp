@@ -270,3 +270,27 @@ def test_rest_api_and_docs(client: Client) -> None:
     assert httpx.get(f"{BASE}/api/memories/not-a-uuid", headers=read).status_code == 400
     tools = httpx.get(f"{BASE}/api/tools", headers=read).json()["tools"]
     assert any(t["name"] == "memory_save" and t["parameters"] for t in tools)
+
+
+def test_removed_term_is_unmasked_by_full_remask(client: Client) -> None:
+    """A wrong term (a common word) can be removed and stored text returns to plain words."""
+    word = "zed" + RUN.translate(str.maketrans("0123456789", "ghijklmnop"))
+    admin = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    client.tool("pseudo_add_term", kind="PERSON", value=word)
+    saved = client.tool("memory_save", kind="semantic", title=f"Merge {word} rule", body=f"The merge {word} are unique.")
+
+    import psycopg
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        assert word not in conn.execute("SELECT body FROM memories WHERE id = %s", (saved["id"],)).fetchone()[0]
+
+    term = [{"kind": "PERSON", "value": word}]
+    assert httpx.request("DELETE", f"{BASE}/api/admin/terms", json=term, headers=admin).json()["removed"] == 1
+    job = httpx.post(f"{BASE}/api/admin/remask", params={"full": "true"}, headers=admin).json()
+    for _ in range(60):
+        status = httpx.get(f"{BASE}/api/admin/jobs/{job['job_id']}", headers=admin).json()
+        if status["status"] != "running":
+            break
+        time.sleep(1)
+    assert status["status"] == "done" and status["memories_remasked"] >= 1
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        assert word in conn.execute("SELECT body FROM memories WHERE id = %s", (saved["id"],)).fetchone()[0]

@@ -172,12 +172,26 @@ def start_job(kind: str, work) -> dict[str, str]:
     return {"job_id": job_id}
 
 
+@admin_router.delete("/terms")
+async def remove_terms(terms: list[TermIn]) -> dict[str, Any]:
+    """Remove dictionary entries (exact kind, value, match_mode, case flag). Run /remask?full=true afterwards."""
+    results = [await services().vault.remove_term(t.kind, t.value, t.match_mode, t.case_insensitive) for t in terms]
+    return {"removed": sum(r["status"] == "removed" for r in results), "not_found": sum(r["status"] == "not_found" for r in results)}
+
+
 @admin_router.post("/remask")
-async def remask_all() -> dict[str, str]:
-    """Apply every dictionary term to everything already stored (after adding terms in bulk or an upgrade)."""
+async def remask_all(full: bool = False) -> dict[str, str]:
+    """Apply the dictionary to everything already stored (background job).
+
+    full=false: only text that still holds a term in plain form. full=true: reveal and re-mask everything,
+    which also un-masks words whose term was removed.
+    """
 
     async def work() -> dict[str, int]:
         svc = services()
+        if full:
+            return {"memories_remasked": await svc.memories.renormalize_all(),
+                    "common_files_remasked": await svc.common.renormalize_all()}
         memories = files = 0
         for term in svc.vault.pseudo.terms:
             memories += await svc.memories.remask(term.value, term.match_mode)

@@ -228,6 +228,17 @@ class CommonService:
             changed += outcome != "unchanged"
         return changed
 
+    async def renormalize_all(self) -> int:
+        """Re-mask every stored file with the current dictionary; unchanged files are skipped."""
+        async with self.pool.connection() as conn:
+            rows = await (await conn.execute("SELECT id, collection, path, sha256, s3_key FROM common_files")).fetchall()
+        changed = 0
+        for row in rows:
+            plain = self.vault.reveal(await self.store.get_text(row["s3_key"]))
+            outcome, _ = await self._store_file(row["collection"], self.vault.reveal(row["path"]), plain, row)
+            changed += outcome != "unchanged"
+        return changed
+
     async def ticket_files(self, ticket: str, limit: int = 10) -> list[dict[str, Any]]:
         """Files in the snapshot that belong to or mention a ticket (path first, then mentions)."""
         like = f"%{ticket}%"
