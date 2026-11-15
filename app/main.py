@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
@@ -21,6 +21,8 @@ from app.embeddings import Embedder
 from app.mcp_tools import mcp
 from app.memories import MemoryService
 from app.pseudonym import Pseudonymizer
+from app.rest import bearer
+from app.rest import router as rest_router
 from app.state import Services, services, set_services
 from app.storage import ObjectStore
 from app.vault import Vault
@@ -70,6 +72,10 @@ async def lifespan(_: FastAPI):
         await pool.close()
 
 
+# Health and the API docs page carry no data, so they are open; everything else needs a token
+PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/docs/oauth2-redirect"}
+
+
 class BearerAuth:
     """Token check for /mcp (MCP or admin token) and /api/admin (admin token). /health is open."""
 
@@ -77,7 +83,7 @@ class BearerAuth:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] == "/health":
+        if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
             await self.app(scope, receive, send)
             return
 
@@ -98,13 +104,22 @@ class BearerAuth:
         await self.app(scope, receive, send)
 
 
-app = FastAPI(title="work-memory", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(
+    title="work-memory",
+    version="1.0.0",
+    description="Long-term memory for AI agents. AI clients use MCP at `/mcp`; this page is the REST view for people. "
+                "Click **Authorize** and paste the MCP token (read) or the admin token (read + admin).",
+    lifespan=lifespan,
+    redoc_url=None,
+)
 app.add_middleware(BearerAuth)
+app.include_router(rest_router)
+admin_router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(bearer)])
 jobs: dict[str, dict[str, Any]] = {}
 background_tasks: set[asyncio.Task] = set()
 
 
-@app.get("/health")
+@app.get("/health", tags=["health"])
 async def health() -> dict[str, Any]:
     """Liveness plus whether vector search is available."""
     try:
@@ -125,7 +140,7 @@ class TermIn(BaseModel):
     case_insensitive: bool = True
 
 
-@app.post("/api/admin/terms")
+@admin_router.post("/terms")
 async def add_terms(terms: list[TermIn]) -> dict[str, Any]:
     """Bulk add terms to mask (names, company words, id patterns)."""
     svc = services()
@@ -157,7 +172,7 @@ def start_job(kind: str, work) -> dict[str, str]:
     return {"job_id": job_id}
 
 
-@app.post("/api/admin/remask")
+@admin_router.post("/remask")
 async def remask_all() -> dict[str, str]:
     """Apply every dictionary term to everything already stored (after adding terms in bulk or an upgrade)."""
 
@@ -172,7 +187,7 @@ async def remask_all() -> dict[str, str]:
     return start_job("remask", work)
 
 
-@app.post("/api/admin/common/{collection}")
+@admin_router.post("/common/{collection}")
 async def upload_common(collection: str, request: Request) -> dict[str, str]:
     """Upload a tar.gz snapshot for a collection; processed in the background, poll /api/admin/jobs/{id}."""
     length = int(request.headers.get("content-length") or 0)
@@ -185,7 +200,7 @@ async def upload_common(collection: str, request: Request) -> dict[str, str]:
     return start_job(f"upload {collection}", lambda: services().common.upload(collection, data))
 
 
-@app.get("/api/admin/jobs/{job_id}")
+@admin_router.get("/jobs/{job_id}")
 async def job_status(job_id: str) -> dict[str, Any]:
     """Status of a background upload."""
     if job_id not in jobs:
@@ -193,13 +208,13 @@ async def job_status(job_id: str) -> dict[str, Any]:
     return jobs[job_id]
 
 
-@app.delete("/api/admin/common/{collection}")
+@admin_router.delete("/common/{collection}")
 async def delete_common(collection: str) -> dict[str, Any]:
     """Remove a collection from the snapshot."""
     return await services().common.delete_collection(collection)
 
 
-@app.post("/api/admin/restore")
+@admin_router.post("/restore")
 async def restore() -> dict[str, Any]:
     """Rebuild an empty database from S3 (dictionary, tokens, memories, common)."""
     svc = services()
@@ -210,6 +225,8 @@ async def restore() -> dict[str, Any]:
     vault_counts = await svc.vault.restore_from_store()
     return {**vault_counts, "memories": await svc.memories.restore_from_store(), "common_files": await svc.common.restore_from_store()}
 
+
+app.include_router(admin_router)
 
 # MCP last, so the routes above match first
 app.mount("/", mcp_app)

@@ -254,3 +254,19 @@ def test_common_snapshot(client: Client) -> None:
 
     httpx.delete(f"{BASE}/api/admin/common/{collection}", headers=admin)
     httpx.delete(f"{BASE}/api/admin/common/notes-{RUN}", headers=admin)
+
+
+def test_rest_api_and_docs(client: Client) -> None:
+    """Docs page is open; data endpoints need a token; admin endpoints need the admin token."""
+    assert httpx.get(f"{BASE}/docs").status_code == 200
+    assert httpx.get(f"{BASE}/api/stats").status_code == 401
+    read = {"Authorization": f"Bearer {MCP_TOKEN}"}
+    assert httpx.get(f"{BASE}/api/admin/jobs/x", headers=read).status_code == 401
+
+    saved = client.tool("memory_save", kind="semantic", title=f"REST check {RUN}", body="Visible through the REST view.")
+    found = httpx.get(f"{BASE}/api/memories/search", params={"q": f"REST check {RUN}", "limit": 1}, headers=read).json()
+    assert found[0]["id"] == saved["id"]
+    assert httpx.get(f"{BASE}/api/memories/{saved['id']}", headers=read).json()["body"] == "Visible through the REST view."
+    assert httpx.get(f"{BASE}/api/memories/not-a-uuid", headers=read).status_code == 400
+    tools = httpx.get(f"{BASE}/api/tools", headers=read).json()["tools"]
+    assert any(t["name"] == "memory_save" and t["parameters"] for t in tools)

@@ -23,6 +23,11 @@ Postgres yo'qolsa: yangi baza → `POST /api/admin/restore` → hammasi S3'dan q
 - Kirish: `MCP_TOKEN` (AI mijozlar), `ADMIN_TOKEN` (upload/restore). `/health` ochiq.
 - Common: server hech qachon git ishlatmaydi (clone/pull/commit/push yo'q). Snapshot'ni admin yuklaydi.
 
+## API doc (odamlar uchun)
+`https://<domain>/docs` → **Authorize** → token. Memory'lar (`/api/memories`, `/api/memories/search`, `/api/tickets/{ticket}`),
+statistika, common fayllar (`/api/common`, `/read`, `/search`, `/grep`), lug'at (`/api/terms`) va AI ko'radigan MCP tool'lar
+(`/api/tools`). Admin endpoint'lar (`/api/admin/...`) faqat admin token bilan.
+
 ## MCP tool'lar
 `task_context`, `memory_search`, `memory_save`, `memory_get`, `memory_update`, `memory_archive`, `memory_recent`,
 `close_task`, `memory_stats`, `pseudo_add_term`, `pseudo_list_terms`, `pseudo_suggest_terms`, `common_list`,
@@ -84,6 +89,7 @@ S3 uchun Cloudflare R2 (10 GB bepul). Railway qulayroq (deploy, backup, TLS o'zi
 ## Tuzilma
 ```
 app/main.py         FastAPI, auth, admin REST, MCP mount
+app/rest.py         odamlar uchun o'qish REST API (/docs)
 app/mcp_tools.py    MCP tool'lar va AI uchun instructions
 app/memories.py     save/update/archive/search/task_context, S3 + Postgres tranzaksiya
 app/common.py       snapshot upload (tar.gz), list/read/search/grep, notebook JSON → kod
