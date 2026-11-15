@@ -225,8 +225,18 @@ def contacts_prompt(state: dict[str, Any]) -> str:
     """The bot's name and who is paired with it, so Claude can introduce itself and address messages and files."""
     lines = [f"- {name}{' (ustoz, egasi)' if int(cid) == state.get('owner') else ''}"
              for cid, name in state.get("names", {}).items()]
-    return (f"\n\n## Ismingiz\nSizning ismingiz {BOT_NAME}. O'zingizni shu ism bilan tanishtirasiz."
-            "\n\n## Telegram kontaktlar (botga ulangan odamlar)\n" + ("\n".join(lines) or "- (hali yo'q)"))
+    return "\n\n## Telegram kontaktlar (botga ulangan odamlar)\n" + ("\n".join(lines) or "- (hali yo'q)")
+
+
+def persona_prompt() -> str:
+    """The name the bot owner chose; placed first so it frames the whole conversation."""
+    return (
+        f"# Rol\nBu Telegram botda siz bot egasi (ustoz) tanlagan ism bilan ishlaysiz: **{BOT_NAME}**. "
+        f"Ismingizni so'rashsa yoki o'zingizni tanishtirsangiz, \"{BOT_NAME}\" deysiz (\"Claude\" emas). "
+        "Bu bot egasining sozlamasi, xotirada alohida kelishuv izlash shart emas. "
+        "Faqat kimdir jiddiy ravishda AI ekaningizni yoki qaysi modelga asoslanganingizni so'rasa, halol aytasiz: "
+        "Anthropic'ning Claude modeliga asoslangan AI yordamchisiz.\n\n"
+    )
 
 
 def build_command(state: dict[str, Any], prompt: str) -> list[str]:
@@ -238,7 +248,7 @@ def build_command(state: dict[str, Any], prompt: str) -> list[str]:
         "--mcp-config", str(MCP_CONFIG), "--strict-mcp-config",
         "--allowedTools", *ALLOWED_TOOLS,
         "--disallowedTools", *DISALLOWED_TOOLS,
-        "--append-system-prompt", RULES_FILE.read_text() + contacts_prompt(state),
+        "--append-system-prompt", persona_prompt() + RULES_FILE.read_text() + contacts_prompt(state),
     ]
     if state.get("session_id"):
         command += ["--resume", state["session_id"]]

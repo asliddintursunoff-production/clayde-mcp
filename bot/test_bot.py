@@ -100,4 +100,6 @@ def test_unknown_or_large_files_are_explained() -> None:
 
 
 def test_prompt_carries_bot_name() -> None:
-    assert "Teresa Lisbon" in bot.contacts_prompt(STATE)
+    command = bot.build_command({"session_id": None, "names": {}}, "hi")
+    prompt = command[command.index("--append-system-prompt") + 1]
+    assert prompt.startswith("# Rol") and "**Teresa Lisbon**" in prompt
