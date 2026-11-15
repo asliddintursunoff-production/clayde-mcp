@@ -30,6 +30,7 @@ RULES_FILE = Path(__file__).resolve().parent / "rules.md"
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 PAIR_CODE = os.environ["PAIR_CODE"]
 MODEL = os.environ.get("BOT_MODEL", "opus")
+BOT_NAME = os.environ.get("BOT_NAME", "Teresa Lisbon")
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT_SEC", str(30 * 60)))
 API = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -221,10 +222,11 @@ def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str)
 # ---- Claude --------------------------------------------------------------------------------
 
 def contacts_prompt(state: dict[str, Any]) -> str:
-    """Who is paired with the bot, so Claude can address messages and files."""
+    """The bot's name and who is paired with it, so Claude can introduce itself and address messages and files."""
     lines = [f"- {name}{' (ustoz, egasi)' if int(cid) == state.get('owner') else ''}"
              for cid, name in state.get("names", {}).items()]
-    return "\n\n## Telegram kontaktlar (botga ulangan odamlar)\n" + ("\n".join(lines) or "- (hali yo'q)")
+    return (f"\n\n## Ismingiz\nSizning ismingiz {BOT_NAME}. O'zingizni shu ism bilan tanishtirasiz."
+            "\n\n## Telegram kontaktlar (botga ulangan odamlar)\n" + ("\n".join(lines) or "- (hali yo'q)"))
 
 
 def build_command(state: dict[str, Any], prompt: str) -> list[str]:
@@ -421,6 +423,8 @@ def main() -> None:
     """Long-poll Telegram forever; each message is handled in its own thread."""
     WORK.mkdir(parents=True, exist_ok=True)
     write_mcp_config()
+    if tg("getMyName").get("result", {}).get("name") != BOT_NAME:  # Telegram rate-limits renames, so only when it differs
+        tg("setMyName", name=BOT_NAME)
     state = load_state()
     save_state(state)
     print("bridge started", flush=True)

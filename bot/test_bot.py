@@ -97,3 +97,7 @@ def test_unknown_or_large_files_are_explained() -> None:
     bot._download = lambda file_id, size: None
     assert "20 MB" in bot.save_attachment({"message_id": 7, "document": {"file_id": "big", "file_name": "huge.zip", "file_size": 10**9}})
     assert bot.save_attachment({"message_id": 8, "sticker": {"file_id": "s"}}) == "(Stiker yubordi.)"
+
+
+def test_prompt_carries_bot_name() -> None:
+    assert "Teresa Lisbon" in bot.contacts_prompt(STATE)

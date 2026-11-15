@@ -101,6 +101,7 @@ Railway'da ikkinchi servis:
    MEMORY_MCP_URL=https://<memory domain>/mcp
    MCP_TOKEN=${{<memory servis nomi>.WORK_TOKEN}}   # work-only: shaxsiy memory'lar ko'rinmaydi
    BOT_MODEL=opus
+   BOT_NAME=Teresa Lisbon        # ixtiyoriy; Telegram nomi ham shunga o'rnatiladi
    ```
 5. Restart policy: Always. Domain kerak emas.
 6. Lokal botni to'xtating (bir token bilan ikki bot ishlasa Telegram 409 beradi).
