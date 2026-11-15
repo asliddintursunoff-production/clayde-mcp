@@ -1,0 +1,42 @@
+# Local test stack: Postgres + pgvector, SeaweedFS (S3), and the app.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: memory
+      POSTGRES_DB: memory
+    ports: ["127.0.0.1:${DB_PORT:-5433}:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory"]
+      interval: 3s
+      retries: 20
+
+  s3:
+    # SeaweedFS S3 gateway (local only; no identities configured = any key is accepted)
+    image: chrislusf/seaweedfs:latest
+    command: server -dir=/data -s3 -s3.port=9000 -master.volumeSizeLimitMB=256
+    ports: ["127.0.0.1:${S3_PORT:-9000}:9000"]
+    volumes: [s3-data:/data]
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://memory:memory@db:5432/memory
+      S3_ENDPOINT_URL: http://s3:9000
+      S3_ACCESS_KEY_ID: local
+      S3_SECRET_ACCESS_KEY: local-secret
+      S3_BUCKET: memory
+      S3_CREATE_BUCKET: "true"
+    ports: ["127.0.0.1:${APP_PORT:-8000}:8000"]
+    # Dev: live code from the host (remove for a production-like run)
+    volumes: ["./app:/srv/app:ro", "./tests:/srv/tests:ro", "./scripts:/srv/scripts:ro"]
+    depends_on:
+      db: {condition: service_healthy}
+      s3: {condition: service_started}
+
+volumes:
+  db-data:
+  s3-data:
