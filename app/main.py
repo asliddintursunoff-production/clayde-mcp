@@ -139,15 +139,37 @@ async def add_terms(terms: list[TermIn]) -> dict[str, Any]:
             "memories_remasked": remasked}
 
 
+def start_job(kind: str, work) -> dict[str, str]:
+    """Run a long admin task in the background; poll /api/admin/jobs/{id} (proxies cut long requests)."""
+    job_id = uuid.uuid4().hex[:12]
+    jobs[job_id] = {"status": "running", "job": kind}
+
+    async def run() -> None:
+        try:
+            jobs[job_id] = {"status": "done", **await work()}
+        except Exception as error:  # report any failure to the poller instead of losing it
+            log.exception("job %s failed", kind)
+            jobs[job_id] = {"status": "failed", "error": str(error)}
+
+    task = asyncio.get_running_loop().create_task(run())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    return {"job_id": job_id}
+
+
 @app.post("/api/admin/remask")
-async def remask_all() -> dict[str, int]:
+async def remask_all() -> dict[str, str]:
     """Apply every dictionary term to everything already stored (after adding terms in bulk or an upgrade)."""
-    svc = services()
-    memories = files = 0
-    for term in svc.vault.pseudo.terms:
-        memories += await svc.memories.remask(term.value, term.match_mode)
-        files += await svc.common.remask(term.value, term.match_mode)
-    return {"memories_remasked": memories, "common_files_remasked": files}
+
+    async def work() -> dict[str, int]:
+        svc = services()
+        memories = files = 0
+        for term in svc.vault.pseudo.terms:
+            memories += await svc.memories.remask(term.value, term.match_mode)
+            files += await svc.common.remask(term.value, term.match_mode)
+        return {"memories_remasked": memories, "common_files_remasked": files}
+
+    return start_job("remask", work)
 
 
 @app.post("/api/admin/common/{collection}")
@@ -160,20 +182,7 @@ async def upload_common(collection: str, request: Request) -> dict[str, str]:
     if not data:
         raise HTTPException(400, "empty body; send the tar.gz as the request body")
 
-    job_id = uuid.uuid4().hex[:12]
-    jobs[job_id] = {"status": "running", "collection": collection}
-
-    async def run() -> None:
-        try:
-            jobs[job_id] = {"status": "done", **await services().common.upload(collection, data)}
-        except Exception as error:  # report any failure to the poller instead of losing it
-            log.exception("upload %s failed", collection)
-            jobs[job_id] = {"status": "failed", "error": str(error)}
-
-    task = asyncio.get_running_loop().create_task(run())
-    background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
-    return {"job_id": job_id}
+    return start_job(f"upload {collection}", lambda: services().common.upload(collection, data))
 
 
 @app.get("/api/admin/jobs/{job_id}")

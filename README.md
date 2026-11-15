@@ -61,7 +61,7 @@ Eslatmalarni yuklash (faqat .md/.txt, repo nusxasiz):
 python scripts/upload_common.py ~/notes notes --exclude repo-copy drafts --only-ext .md .txt
 ```
 
-Hamma term'ni saqlangan narsalarga qayta qo'llash: `POST /api/admin/remask` (admin token).
+Hamma term'ni saqlangan narsalarga qayta qo'llash: `POST /api/admin/remask` (admin token; fonda ishlaydi, `job_id` qaytaradi → `GET /api/admin/jobs/{id}`).
 
 Lug'atga ko'p so'z qo'shish:
 ```bash
