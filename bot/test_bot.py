@@ -39,3 +39,14 @@ def test_command_restricts_tools_and_resumes() -> None:
     command = bot.build_command({"session_id": "abc", "names": {}}, "hi")
     assert "--strict-mcp-config" in command and "Bash" in command[command.index("--disallowedTools"):]
     assert command[-2:] == ["--resume", "abc"] and "mcp__work-memory" in command
+
+
+def test_unpaired_chat_is_asked_for_code_and_code_pairs() -> None:
+    sent.clear()
+    state = {"chat_ids": [], "names": {}, "session_id": None, "offset": 0}
+    bot.save_state = lambda st: None
+    message = {"chat": {"id": 7}, "from": {"first_name": "New"}, "text": "/start", "message_id": 1}
+    bot.handle(state, message)
+    assert sent[-1][:2] == ("msg", 7) and "kodini" in sent[-1][2] and bot.PAIR_CODE not in sent[-1][2]
+    bot.handle(state, {**message, "text": bot.PAIR_CODE})
+    assert state["chat_ids"] == [7] and state["owner"] == 7 and "Ulandingiz" in sent[-1][2]

@@ -210,6 +210,7 @@ def ask_claude(state: dict[str, Any], prompt: str) -> str:
     try:
         output = json.loads(process.stdout)
     except json.JSONDecodeError:
+        print(f"claude failed (exit {process.returncode}): {(process.stderr or process.stdout)[-500:]}", flush=True)
         return f"Xatolik (claude):\n{(process.stderr or process.stdout)[-1500:]}"
 
     # A resume of a lost session (new volume, cleared state) starts over instead of failing forever
@@ -218,6 +219,8 @@ def ask_claude(state: dict[str, Any], prompt: str) -> str:
         save_state(state)
         return ask_claude(state, prompt)
 
+    if output.get("is_error"):
+        print(f"claude returned an error: {str(output.get('result'))[:500]}", flush=True)
     if output.get("session_id"):
         state["session_id"] = output["session_id"]
         save_state(state)
@@ -251,14 +254,18 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
     text = (message.get("text") or message.get("caption") or "").strip()
     who = message["from"].get("first_name", "?")
 
-    # Only paired chats; the first paired chat becomes the owner
+    # Only paired chats; the first paired chat becomes the owner. Others are asked for the code (never told it).
     if chat_id not in state["chat_ids"]:
         if text in (PAIR_CODE, f"/start {PAIR_CODE}"):
             state["chat_ids"].append(chat_id)
             state.setdefault("names", {})[str(chat_id)] = who
             state.setdefault("owner", chat_id)
             save_state(state)
+            print(f"paired chat {chat_id} ({who})", flush=True)
             send(chat_id, "Ulandingiz ✅ Endi oddiy yozavering.\n/new — yangi suhbat")
+        else:
+            print(f"unpaired message from chat {chat_id} ({who})", flush=True)
+            send(chat_id, "Salom! Botdan foydalanish uchun ulanish kodini yuboring.")
         return
 
     image = save_image(message)
