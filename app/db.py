@@ -48,13 +48,25 @@ async def _configure(conn: psycopg.AsyncConnection) -> None:
     await register_vector_async(conn)
 
 
+# TCP keepalives notice a dead peer quickly instead of hanging on it
+KEEPALIVE = {"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 3}
+
+
 def create_pool(database_url: str, max_size: int) -> AsyncConnectionPool:
-    """Create (but don't open) the async pool; rows come back as dicts."""
+    """Create (but don't open) the async pool; rows come back as dicts.
+
+    Connections can die under the pool (database restart, network idle cut-off), so each one is
+    checked before it is handed out and replaced if broken; idle and old connections are recycled.
+    """
     return AsyncConnectionPool(
         database_url,
         min_size=1,
         max_size=max_size,
         open=False,
         configure=_configure,
-        kwargs={"row_factory": dict_row},
+        check=AsyncConnectionPool.check_connection,
+        max_idle=300,
+        max_lifetime=1800,
+        reconnect_timeout=60,
+        kwargs={"row_factory": dict_row, **KEEPALIVE},
     )
