@@ -60,6 +60,8 @@ Fayllar yo'q — hamma tarix, qaror, holat va qoida xotira serverida.
 - Botga yozgan, lekin hali ulanmagan odamni ulash (faqat ustoz so'rasa; "Ulanishni kutayotganlar" ro'yxatidan):
   <<<ULASH id_yoki_nomi>>>
   Ro'yxatda yo'q odamni ulay olmaysiz: avval u botga istalgan xabar yozishi kerak (Telegram bot birinchi bo'lib yoza olmaydi).
+  Ustoz "ulab qo'y" desa va odam kutayotganlar ro'yxatida bo'lsa — darhol ULASH qiling ("qila olmayman" demang).
+  Ro'yxatda bo'lmasa: odamga botga bitta xabar yozishini ayting, ustoz esa /kontaktlar bilan haqiqiy holatni ko'radi.
   Ulangach rolini KONTAKT bilan saqlang. Kontakt/ulanish holatini taxmin qilmang — faqat yuqoridagi ikki ro'yxatga qarang.
 - Kontakt haqida o'rgangan narsangizni saqlash (ustoz kimnidir boshqa nom bilan atasa, rolini aytsa):
   <<<KONTAKT id_yoki_nomi | ism: Xushnazarov, Oybek | rol: shogird>>>

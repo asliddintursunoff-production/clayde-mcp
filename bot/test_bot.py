@@ -150,3 +150,14 @@ def test_owner_connects_a_waiting_chat_without_the_code() -> None:
     # /add for someone who never wrote explains what to do
     bot.handle(state, {"chat": {"id": 1}, "from": {"first_name": "Ustoz"}, "text": "/add 12345", "message_id": 2})
     assert "avval botga" in sent[-1][2]
+
+
+def test_owner_sees_real_contact_state_and_group_sender_is_named() -> None:
+    import copy
+    sent.clear()
+    bot.save_state = lambda st: None
+    state = copy.deepcopy(STATE)
+    state["pending"] = {"9": {"first_name": "Oybek", "last_name": "Xushnazarov", "username": ""}}
+    bot.handle(state, {"chat": {"id": 1, "type": "private"}, "from": {"id": 1, "first_name": "Ustoz"}, "text": "/kontaktlar", "message_id": 3})
+    assert "id 2" in sent[-1][2] and "/add 9" in sent[-1][2]
+    assert bot.sender_note(-100, {"id": 5}) and not bot.sender_note(5, {"id": 5})

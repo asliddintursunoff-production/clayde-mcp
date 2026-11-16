@@ -481,6 +481,25 @@ def save_attachment(message: dict[str, Any]) -> str:
     return ""
 
 
+def contacts_report(state: dict[str, Any]) -> str:
+    """/kontaktlar: the real connection state, straight from the bot's state file."""
+    lines = ["Ulangan chatlar:"]
+    for cid in state.get("chat_ids", []):
+        contact = state.get("contacts", {}).get(str(cid), {})
+        role = "ustoz, egasi" if cid == state.get("owner") else contact.get("role", "rol yo'q")
+        kind = state.get("chat_types", {}).get(str(cid), "?")
+        lines.append(f"- id {cid} ({kind}): {', '.join(dict.fromkeys(contact_names(contact))) or '?'} — {role}")
+    waiting = state.get("pending", {})
+    lines.append("Ulanishni kutayotganlar:" if waiting else "Ulanishni kutayotganlar: hech kim")
+    lines += [f"- id {cid}: {' '.join(filter(None, [p.get('first_name'), p.get('last_name')]))} → /add {cid}" for cid, p in waiting.items()]
+    return "\n".join(lines)
+
+
+def sender_note(chat_id: int, sender: dict[str, Any]) -> str:
+    """In a group chat several people share one chat id; add the sender's own id so they are not mixed up."""
+    return f" | guruh chati, yozuvchi user id {sender['id']}" if sender.get("id") and sender["id"] != chat_id else ""
+
+
 def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
     """Pairing, commands, then one Claude turn per message."""
     chat_id = message["chat"]["id"]
@@ -508,12 +527,16 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
         return
 
     update_contact(state, chat_id, sender)
+    state.setdefault("chat_types", {})[str(chat_id)] = message["chat"].get("type", "private")
     save_state(state)
     attachment = save_attachment(message)
     if attachment:
         text = f"{text}\n\n{attachment}".strip()
     if not text:
         send(chat_id, "Bu turdagi xabarni hali tushunmayman — matn yoki fayl yuboring.")
+        return
+    if text == "/kontaktlar" and chat_id == state.get("owner"):
+        send(chat_id, contacts_report(state))
         return
     if text.startswith("/add"):
         send(chat_id, connect_pending(state, chat_id == state.get("owner"), text[4:]).strip())
@@ -528,7 +551,7 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
     threading.Thread(target=keep_typing, args=(chat_id, stop), daemon=True).start()
     try:
         with lock:  # one shared conversation, so one message at a time
-            reply = deliver_blocks(state, who, chat_id, ask_claude(state, f"[{who} | id {chat_id}]: {text}", chat_id))
+            reply = deliver_blocks(state, who, chat_id, ask_claude(state, f"[{who} | id {chat_id}{sender_note(chat_id, sender)}]: {text}", chat_id))
     except subprocess.TimeoutExpired:
         reply = "Javob juda uzoq cho'zildi, to'xtatildi."
     except Exception as error:  # keep the bot alive on any failure
