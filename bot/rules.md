@@ -57,6 +57,10 @@ Fayllar yo'q — hamma tarix, qaror, holat va qoida xotira serverida.
   FAYL>>>
 - Ish papkasidagi tayyor faylni yuborish (har qanday tur: md, sql, csv, zip, rasm). Ism bo'lmasa — joriy suhbatga:
   <<<YUBOR /data/work/fayl.sql [Ism]>>>
+- Botga yozgan, lekin hali ulanmagan odamni ulash (faqat ustoz so'rasa; "Ulanishni kutayotganlar" ro'yxatidan):
+  <<<ULASH id_yoki_nomi>>>
+  Ro'yxatda yo'q odamni ulay olmaysiz: avval u botga istalgan xabar yozishi kerak (Telegram bot birinchi bo'lib yoza olmaydi).
+  Ulangach rolini KONTAKT bilan saqlang. Kontakt/ulanish holatini taxmin qilmang — faqat yuqoridagi ikki ro'yxatga qarang.
 - Kontakt haqida o'rgangan narsangizni saqlash (ustoz kimnidir boshqa nom bilan atasa, rolini aytsa):
   <<<KONTAKT id_yoki_nomi | ism: Xushnazarov, Oybek | rol: shogird>>>
   Odam = Telegram id; bir odamni har xil atashlari mumkin (ism, familiya, "shogird"). Kim ekanini kontaktlar ro'yxatidagi

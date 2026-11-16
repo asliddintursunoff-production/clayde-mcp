@@ -221,12 +221,46 @@ def apply_contact_block(state: dict[str, Any], from_owner: bool, header: str) ->
     return f"\n(👤 Kontakt yangilandi: {', '.join(contact_names(contact))})\n"
 
 
+def pair_chat(state: dict[str, Any], chat_id: int, sender: dict[str, Any]) -> None:
+    """Connect a chat: the first one becomes the owner; it leaves the waiting list."""
+    if chat_id not in state["chat_ids"]:
+        state["chat_ids"].append(chat_id)
+    state.setdefault("owner", chat_id)
+    state.setdefault("pending", {}).pop(str(chat_id), None)
+    update_contact(state, chat_id, sender)
+    save_state(state)
+
+
+def find_pending(state: dict[str, Any], name: str) -> int | None:
+    """Chat id of someone who wrote to the bot but is not connected, by id, name or @username."""
+    wanted = name.strip().lstrip("[").rstrip("]").strip().lower()
+    for cid, sender in state.get("pending", {}).items():
+        names = [cid, sender.get("first_name"), sender.get("last_name"), sender.get("username") and f"@{sender['username']}",
+                 " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")]))]
+        if wanted and any(n and (n.lower() == wanted or wanted in n.lower().split()) for n in names):
+            return int(cid)
+    return None
+
+
+def connect_pending(state: dict[str, Any], from_owner: bool, who: str) -> str:
+    """Owner-approved connection of a waiting chat (/add or <<<ULASH who>>>); the person is told they are in."""
+    if not from_owner:
+        return "\n(⚠️ Odamni faqat ustoz ulay oladi)\n"
+    target = find_pending(state, who)
+    if target is None:
+        return f"\n(⚠️ Ulanishni kutayotganlar ichida topilmadi: {who.strip() or '?'}. Odam avval botga istalgan xabar yozishi kerak.)\n"
+    pair_chat(state, target, state["pending"][str(target)])
+    send(target, "Ulandingiz ✅ Ustoz sizni qo'shdi. Endi oddiy yozavering.\n/new — yangi suhbat")
+    return f"\n(✅ Ulandi: {state['names'][str(target)]}, id {target})\n"
+
+
 def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str) -> str:  # noqa: C901
     """Act on the reply's blocks, remove them and leave a short note in their place.
 
     <<<XABAR Name ... XABAR>>>          message a paired contact
     <<<FAYL name.ext [Name] ... FAYL>>>  send the text as a file
     <<<YUBOR path [Name]>>>             send an existing file from the work folder (any type)
+    <<<ULASH who>>>                     connect someone who wrote to the bot (only from the owner's messages)
     <<<KONTAKT who | ism: a, b | rol: r>>> remember names/role of a contact (only from the owner's messages)
     Code blocks longer than LONG_CODE_CHARS are also sent as files instead of chat text.
     """
@@ -268,6 +302,7 @@ def deliver_blocks(state: dict[str, Any], sender: str, chat_id: int, reply: str)
         return match.group(0)
 
     from_owner = chat_id == state.get("owner")
+    reply = re.sub(r"<<<ULASH([^\n>]*)>>>", lambda m: connect_pending(state, from_owner, m.group(1)), reply)
     reply = re.sub(r"<<<KONTAKT([^\n>]*)>>>", lambda m: apply_contact_block(state, from_owner, m.group(1)), reply)
     reply = blocks.sub(handle_block, reply)
     reply = re.sub(r"<<<YUBOR([^\n>]*)>>>", handle_send, reply)
@@ -283,8 +318,12 @@ def contacts_prompt(state: dict[str, Any], current_chat: int | None = None) -> s
         role = "ustoz, egasi" if int(cid) == state.get("owner") else contact.get("role", "rol noma'lum")
         current = " ← hozir yozayotgan" if current_chat is not None and int(cid) == current_chat else ""
         lines.append(f"- id {cid}: {', '.join(dict.fromkeys(contact_names(contact)))} ({role}){current}")
+    waiting = [f"- id {cid}: {' '.join(filter(None, [p.get('first_name'), p.get('last_name')]))}"
+               + (f" @{p['username']}" if p.get("username") else "") for cid, p in state.get("pending", {}).items()]
     return ("\n\n## Telegram kontaktlar (botga ulangan odamlar; shaxs = Telegram id, nomlari har xil bo'lishi mumkin)\n"
-            + ("\n".join(lines) or "- (hali yo'q)"))
+            + ("\n".join(lines) or "- (hali yo'q)")
+            + "\n\n## Ulanishni kutayotganlar (botga yozgan, hali ulanmagan; ustoz aytsa <<<ULASH id>>> bilan ulang)\n"
+            + ("\n".join(waiting) or "- (hech kim)"))
 
 
 def persona_prompt() -> str:
@@ -452,15 +491,20 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
     # Only paired chats; the first paired chat becomes the owner. Others are asked for the code (never told it).
     if chat_id not in state["chat_ids"]:
         if text in (PAIR_CODE, f"/start {PAIR_CODE}"):
-            state["chat_ids"].append(chat_id)
-            state.setdefault("owner", chat_id)
-            update_contact(state, chat_id, sender)
-            save_state(state)
+            pair_chat(state, chat_id, sender)
             print(f"paired chat {chat_id} ({who})", flush=True)
             send(chat_id, "Ulandingiz ✅ Endi oddiy yozavering.\n/new — yangi suhbat")
-        else:
-            print(f"unpaired message from chat {chat_id} ({who})", flush=True)
-            send(chat_id, "Salom! Botdan foydalanish uchun ulanish kodini yuboring.")
+            return
+        # Remember who knocked and tell the owner once, so the owner can connect them without sharing the code
+        print(f"unpaired message from chat {chat_id} ({who})", flush=True)
+        first_time = str(chat_id) not in state.setdefault("pending", {})
+        state["pending"][str(chat_id)] = {key: sender.get(key, "") for key in ("first_name", "last_name", "username")}
+        save_state(state)
+        send(chat_id, "Salom! Ustoz sizni ulashi kerak — unga xabar berdim. Yoki ulanish kodini yuboring.")
+        if first_time and state.get("owner"):
+            handle_name = f" @{sender['username']}" if sender.get("username") else ""
+            send(state["owner"], f"👋 {who}{handle_name} (id {chat_id}) botga yozdi, lekin ulanmagan.\n"
+                                 f"Ulash uchun: /add {chat_id}  (yoki menga \"uni ulab qo'y\" deng)")
         return
 
     update_contact(state, chat_id, sender)
@@ -470,6 +514,9 @@ def handle(state: dict[str, Any], message: dict[str, Any]) -> None:
         text = f"{text}\n\n{attachment}".strip()
     if not text:
         send(chat_id, "Bu turdagi xabarni hali tushunmayman — matn yoki fayl yuboring.")
+        return
+    if text.startswith("/add"):
+        send(chat_id, connect_pending(state, chat_id == state.get("owner"), text[4:]).strip())
         return
     if text == "/new":
         state["session_id"] = None

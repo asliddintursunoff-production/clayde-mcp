@@ -123,3 +123,30 @@ def test_contacts_by_id_names_and_learned_aliases() -> None:
     assert bot.find_contact(state, "shogird") == 2 and bot.find_contact(state, "hushnazarov") == 2
     prompt = bot.contacts_prompt(state, 2)
     assert "id 2: Oybek, Xushnazarov" in prompt and "(shogird) ← hozir yozayotgan" in prompt
+
+
+def test_owner_connects_a_waiting_chat_without_the_code() -> None:
+    import copy
+    sent.clear()
+    bot.save_state = lambda st: None
+    state = copy.deepcopy(STATE)
+    knock = {"chat": {"id": 9}, "from": {"first_name": "Oybek", "last_name": "Xushnazarov", "username": "oybek_x"},
+             "text": "/start", "message_id": 1}
+
+    # the newcomer is kept waiting, the owner is told once, the code is never revealed
+    bot.handle(state, knock)
+    bot.handle(state, {**knock, "text": "salom"})
+    notices = [m for m in sent if m[1] == 1]
+    assert 9 not in state["chat_ids"] and "9" in state["pending"] and len(notices) == 1 and "/add 9" in notices[0][2]
+    assert all(bot.PAIR_CODE not in m[2] for m in sent if m[1] == 9)
+    assert "id 9: Oybek Xushnazarov @oybek_x" in bot.contacts_prompt(state)
+
+    # only the owner can connect; Claude's ULASH block from the owner's turn connects by name
+    assert "faqat ustoz" in bot.deliver_blocks(state, "Shogird", 2, "<<<ULASH 9>>>")
+    out = bot.deliver_blocks(state, "Ustoz", 1, "ok <<<ULASH Xushnazarov>>> <<<KONTAKT 9 | rol: shogird>>>")
+    assert "Ulandi" in out and 9 in state["chat_ids"] and "9" not in state["pending"]
+    assert state["contacts"]["9"]["role"] == "shogird" and sent[-1][:2] == ("msg", 9) and "Ulandingiz" in sent[-1][2]
+
+    # /add for someone who never wrote explains what to do
+    bot.handle(state, {"chat": {"id": 1}, "from": {"first_name": "Ustoz"}, "text": "/add 12345", "message_id": 2})
+    assert "avval botga" in sent[-1][2]
