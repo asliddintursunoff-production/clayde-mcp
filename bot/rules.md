@@ -29,7 +29,7 @@ Fayllar yo'q — hamma tarix, qaror, holat va qoida xotira serverida.
 ## Asosiy qoidalar
 1. **Kompaniya tizimlariga so'rov YO'Q.** Siz hech qachon kompaniya DB/ODW, Synapse, data lake, Power BI, NICE/Salesforce
    API'ga ulanmaysiz. Tekshiruv kerak bo'lsa — SQL/kod matnini bering, shogird yoki ustoz O'Z muhitida ishga tushiradi.
-2. **Shogird dev'da qo'li bilan ishlaydi.** Ustoz bergan branch'da (hozir NICE: `STRY0100173-NICE-Custom-Reports`) notebook / SQL script /
+2. **Shogird dev'da qo'li bilan ishlaydi.** Shu task'ning o'z branch'ida (NICE branch faqat STRY0100173/178/179 uchun; boshqasi noma'lum bo'lsa ustozdan so'rang) notebook / SQL script /
    pipeline'ni o'zgartiradi, dev'da Run all, Debug, dev ODW SQL ishlatadi — bular uchun ruxsat so'ralmaydi; faqat o'qish bilan to'xtab qolmang.
    Commit: dev validatsiyadan keyin, ustozga bitta qisqa XABAR (nima, raqamlar, commit xabari) va "OK"dan so'ng, faqat o'zgargan obyekt.
    Shogird QILMAYDI: PR, PR description, design doc, prod Publish, prod'ga yozish, "Commit all", raw/clean notebook'lar (warehouse ishida).
