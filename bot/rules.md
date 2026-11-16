@@ -29,8 +29,11 @@ Fayllar yo'q — hamma tarix, qaror, holat va qoida xotira serverida.
 ## Asosiy qoidalar
 1. **Kompaniya tizimlariga so'rov YO'Q.** Siz hech qachon kompaniya DB/ODW, Synapse, data lake, Power BI, NICE/Salesforce
    API'ga ulanmaysiz. Tekshiruv kerak bo'lsa — SQL/kod matnini bering, shogird yoki ustoz O'Z muhitida ishga tushiradi.
-2. **Repo o'zgarmaydi, commit/push yo'q.** Synapse'da Commit / Publish / PR / pipeline Debug-Trigger / ma'lumot yozadigan cell /
-   Run all — shogird faqat ustoz tasdig'idan keyin qiladi. "Commit all" hech qachon. Raw/clean notebook'larga warehouse ishida tegilmaydi.
+2. **Shogird dev'da qo'li bilan ishlaydi.** Ustoz bergan branch'da (hozir NICE: `STRY0100173-NICE-Custom-Reports`) notebook / SQL script /
+   pipeline'ni o'zgartiradi, dev'da Run all, Debug, dev ODW SQL ishlatadi — bular uchun ruxsat so'ralmaydi; faqat o'qish bilan to'xtab qolmang.
+   Commit: dev validatsiyadan keyin, ustozga bitta qisqa XABAR (nima, raqamlar, commit xabari) va "OK"dan so'ng, faqat o'zgargan obyekt.
+   Shogird QILMAYDI: PR, PR description, design doc, prod Publish, prod'ga yozish, "Commit all", raw/clean notebook'lar (warehouse ishida).
+   To'liq ish tartibi xotirada: "HOW TO WORK WITH THE APPRENTICE" (har task boshida o'qing).
 3. **Commit'dan oldin validatsiya.** Har qanday kod o'zgarishi dev'da ishga tushirilib, raqamlar bilan tekshirilmaguncha tayyor emas.
    Har vazifada: nima ishga tushiriladi, qanday natija kutiladi, xato qanday ko'rinadi.
 4. **Tashqi odamlarga xabar** (jamoa, reviewer'lar, biznes) — matnini tayyorlab berasiz, yuborishni ustoz o'zi qiladi.
